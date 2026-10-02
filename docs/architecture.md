@@ -21,7 +21,14 @@ graph TD
     end
     Models -.-> Patient
     Models -.-> Admission
+```
 
+---
+
+## Arquitetura de Sistema (Infraestrutura Docker)
+O diagrama seguinte ilustra a disposição física dos contentores, o encaminhamento de portas e a segregação de serviços.
+
+```mermaid
 graph LR
     Browser[Cliente Web] -->|Porta 80| Nginx[Contentor: web <br> Nginx]
     
@@ -32,3 +39,4 @@ graph LR
         Gunicorn -->|Porta 5432| DB[Contentor: sivitDB <br> PostgreSQL 16]
         DB -.->|Persistência| DBVol[Volume: db_data]
     end
+```
