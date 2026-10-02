@@ -14,7 +14,7 @@
 ## Exercício 4: O Efeito N+1
 | Abordagem | Nº de Queries | Tempo de Execução (ms) |
 | :--- | :---: | :---: |
-| Naive | 9 | [Inserir Tempo Ex: 36.25] |
-| + select_related | [Inserir Valor] | [Inserir Tempo] |
-| + prefetch_related | [Inserir Valor] | [Inserir Tempo] |
-| + subquery for last reading | 2 | [Inserir Tempo Ex: 16.01] |
+| Naive | 9 | 36.25 |
+| + select_related | 7 | 21.92 |
+| + prefetch_related | 6 | 28.8 |
+| + subquery for last reading | 2 | 20.81 |
