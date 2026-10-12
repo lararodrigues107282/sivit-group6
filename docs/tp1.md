@@ -1,23 +1,44 @@
-# Respostas à TP1 - Laboratório de SIVIT
+﻿# Respostas TP1 - Lab SIVIT
 
-## Exercício 1: Um contentor não é uma máquina
+## Exercício 1
 
-1. **Os processos aparecem no host?** Sim[cite: 21]. Isto demonstra que um contentor não é uma máquina virtual pesada com o seu próprio sistema operativo, mas sim um conjunto de processos normais a correr diretamente no *host*, mantidos em isolamento pelas funcionalidades do *kernel*[cite: 22].
-2. **Namespaces:** Os diferentes *namespaces* visíveis em `/proc/<pid>/ns/` servem para isolar os recursos que o processo consegue ver e usar[cite: 21]. Por exemplo, o *namespace* `pid` isola a árvore de processos, o `net` isola as portas e interfaces de rede, o `mnt` isola o sistema de ficheiros e o `ipc` isola a comunicação entre processos.
-3. **ps aux (Host vs Contentor):** Os resultados são totalmente diferentes porque o contentor está confinado ao seu próprio *namespace* de PIDs[cite: 21]. Como resultado, ele pensa que é o único sistema a correr e vê apenas os seus próprios processos (começando no PID 1). O *host*, por outro lado, tem visibilidade global sobre tudo.
-4. **Limite de memória:** O processo Python tentou alocar cerca de 200MB de RAM, excedendo o orçamento rígido de 64MB que lhe foi atribuído, o que fez com que o *kernel* o "matasse" (*OOM Killed*)[cite: 22]. O mecanismo do *kernel* que aplica e policia estes limites de recursos chama-se `cgroups`[cite: 22].
+1. Processos no host:
+Sim, eles aparecem. Isto acontece uma vez que um contentor não corre um SO Sistema Operativo próprio como numa máquina virtual, estes são apenas processos normais a correr diretamente no kernel do host, estando isolados do resto do sistema.
 
-## Exercício 4: Tabela de Latências e Análise
+2. Namespaces:
+Os namespaces em /proc/<pid>/ns/ definem o que cada processo tem autorização para "ver":
+-- pid: a árvore de processos
+-- net: as interfaces de rede e portas
+-- mnt: os pontos de montagem do sistema de ficheiros
+-- ipc: a comunicação entre processos
 
-| Contexto | p50 (ms) | p95 (ms) | p99 (ms) |
-| :--- | :---: | :---: | :---: |
-| Local function call | 0.0001 | 0.0001 | 0.0006 |
-| HTTP to localhost | 1.18 | 1.68 | 3.49 |
-| HTTP between containers | 1.07 | 1.49 | 1.93 |
-| HTTP to a UMinho server | 310.33 | 338.46 | 338.46 |
-| HTTP to a server in the USA | 77.43 | 84.76 | 88.61 |
+3. ps aux:
+Estes comandos mostram processoas diferentes porque o contentor está preso ao seu próprio namespace de PIDs. Basicamente, para ele só existem os seus processos (com o processo principal a ser o PID 1). Por sua vez o host está no namespace raiz e consegue ver os processos de toda a máquina, incluindo os do contentor.
 
-1. **Ordens de magnitude:** A chamada local de função demorou 0.0001 ms, enquanto o pedido intercontinental ao servidor dos EUA demorou 77.43 ms. Isto representa uma diferença brutal de quase 6 ordens de magnitude (aproximadamente 774 mil vezes mais lento).
-2. **p99 elevado entre contentores:** O p99 (1.93 ms) é consideravelmente superior ao p50 (1.07 ms) porque, mesmo comunicando dentro da mesma máquina, os pedidos HTTP são forçados a percorrer a *stack* de rede do sistema operativo (TCP/IP). Isto expõe a comunicação a atrasos introduzidos pelo escalonamento de processos no CPU ou pausas do *garbage collector* do Python.
-3. **Efeito N+1:** Caso os 30 pedidos remotos fossem feitos sequencialmente, o p95 total seria cumulativo: 30 × 4 ms = 120 ms. Se fossem executados em paralelo, o p95 da operação completa manter-se-ia muito próximo dos 4 ms originais, pois o tempo total seria ditado essencialmente pelo pedido mais lento do grupo.
-4. **Refutação de falácias:** Os valores recolhidos refutam categoricamente a segunda falácia das redes distribuídas: "A latência é zero". Os números comprovam que, assim que abandonamos o acesso em memória (0.0001 ms) para aceder à rede, o tempo base dispara logo para >1 ms, aumentando massivamente à medida que introduzimos distância física.
+4. Limite de memória:
+O script de Python tentou alocar à volta de 200MB, ultrapassando o limite de 64MB definido para o contentor. Quando isto acontece, o kernel intervém e mata o processo (OOM Killer). O mecanismo responsável por impor estes limites de recursos são os cgroups.
+
+
+## Exercício 4
+
+| Contexto                    | p50 (ms) | p95 (ms) | p99 (ms) |
+| :-------------------------- | :------: | :------: | :------: |
+| Local function call         |  0.0001  |  0.0001  |  0.0006  |
+| HTTP to localhost           |   1.18   |   1.68   |   3.49   |
+| HTTP between containers     |   1.07   |   1.49   |   1.93   |
+| HTTP to a UMinho server     |  310.33  |  338.46  |  338.46  |
+| HTTP to a server in the USA |  77.43   |  84.76   |  88.61   |
+
+1. Ordens de magnitude:
+A chamada local demorou cerca de 0.0001 ms, enquanto o pedido ao servidor nos EUA demorou 77.43 ms. Neste caso temos de uma diferença gigantesca de 6 ordens de magnitude.
+
+2. p99 entre contentores:
+O p99 (1.93 ms) sobe em relação ao p50 (1.07 ms) porque, mesmo sendo local, o tráfego HTTP tem de passar pela stack de rede (TCP/IP). Nessas percentagens mais altas começam a pesar pequenas variações como trocas de contexto no CPU, contenção de recursos ou eventuais pausas do runtime de Python.
+
+3. Efeito N+1:
+Sequencial: os tempos somam-se, logo 30 pedidos a 4 ms somam se até aos 120 ms. Contudo, isto é só a soma dos p95, não o p95 real do pedido.
+Probabilidade: um p95 de 4 ms quer dizer que 5% das chamadas passam dos 4 ms. A probabilidade de as 30 ficarem todas abaixo é 0,95^30 = 0,21, por isso cerca de 79% dos pedidos apanham pelo menos uma chamada lenta.
+Paralelo: o pedido demora o tempo da chamada mais lenta. Para o p95 do pedido ser 4 ms, cada chamada teria de ficar abaixo de 4 ms em 99,8% dos casos, mas só 95% ficam. Logo o p95 do pedido é superior aos 4 ms.
+
+4. Falácia refutada:
+A falácia nº 2, "a latência é zero" é refutada pelo facto de que temos 0,0001 ms numa chamada local contra os 1,07 ms entre contentores. Posteriormente, até aos EUA são 77,43 ms. Para concluir, como o servidor da Universidade (310 ms) ficou mais lento do que o dos EUA apesar de estar mais perto, podemos concluir que a latência não depende apenas da distância.
