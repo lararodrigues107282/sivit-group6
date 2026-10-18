@@ -14,6 +14,7 @@ services:
 
   portal:
     build: .
+  
     environment:
       DATABASE_URL: postgres://sivit:${POSTGRES_PASSWORD:-devpass}@sivitDB:5432/sivit
     volumes:

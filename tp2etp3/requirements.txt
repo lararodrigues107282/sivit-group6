@@ -1,0 +1,7 @@
+django==5.0.9
+psycopg[binary]
+dj-database-url
+gunicorn
+djangorestframework
+drf-spectacular
+django-filter
