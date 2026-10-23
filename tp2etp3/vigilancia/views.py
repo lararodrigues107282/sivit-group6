@@ -1,3 +1,6 @@
+from .filters import ReadingFilter, DeviceFilter, AdmissionFilter
+from django.test.utils import CaptureQueriesContext
+from .services import MODOS, linhas_painel
 from django.shortcuts import render
 from django.db import connection
 from .models import Admission
@@ -26,30 +29,19 @@ from .models import Admission, IdempotencyKey
 from rest_framework.pagination import PageNumberPagination
 
 def dashboard(request):
-    start_time = time.time()
-
-    last_reading_qs = Reading.objects.filter(device=OuterRef('pk')).order_by('-instant').values('value')[:1]
-    devices_with_last_reading = Device.objects.annotate(last_val=Subquery(last_reading_qs))
-
-    admissions = Admission.objects.filter(
-        discharged_at__isnull=True
-    ).select_related("patient").prefetch_related(
-        Prefetch('devices', queryset=devices_with_last_reading)
-    )
-
-    rows = []
-    for a in admissions:
-        for d in a.devices.all():
-            last = d.last_val  # Usamos a anotação em vez de fazer nova query
-            rows.append((a.patient.name, d.type, last))
-            
-    end_time = time.time()
-    
-    # Passamos os resultados e a contagem para o HTML
+    modo = request.GET.get("modo", "subquery")
+    if modo not in MODOS:
+        modo = "subquery"
+    with CaptureQueriesContext(connection) as ctx:
+        inicio = time.perf_counter()
+        rows = linhas_painel(modo)
+        tempo_ms = (time.perf_counter() - inicio) * 1000
     context = {
         "rows": rows,
-        "query_count": len(connection.queries),
-        "total_time": round((end_time - start_time) * 1000, 2)
+        "query_count": len(ctx.captured_queries),
+        "total_time": round(tempo_ms, 2),
+        "modo": modo,
+        "modos": list(MODOS),
     }
     return render(request, "dashboard.html", context)
 
@@ -68,11 +60,13 @@ class PatientViewSet(viewsets.ModelViewSet):
 class AdmissionViewSet(viewsets.ModelViewSet):
     queryset = Admission.objects.all()
     serializer_class = AdmissionSerializer
+    filterset_class = AdmissionFilter
 
 
 class DeviceViewSet(viewsets.ModelViewSet):
     queryset = Device.objects.all()
     serializer_class = DeviceSerializer
+    filterset_class = DeviceFilter
 
     @action(detail=True, methods=["get"])
     def readings(self, request, pk=None):
@@ -117,11 +111,15 @@ class DeviceViewSet(viewsets.ModelViewSet):
 class ReadingViewSet(viewsets.ModelViewSet):
     queryset = Reading.objects.all()
     serializer_class = ReadingSerializer
+    filterset_class = ReadingFilter
 
     def create(self, request):
         ser = self.get_serializer(data=request.data, many=True)
         ser.is_valid(raise_exception=True)
         objs = [Reading(**d) for d in ser.validated_data]
         with transaction.atomic():
+            antes = Reading.objects.count()
             Reading.objects.bulk_create(objs, ignore_conflicts=True)
-        return Response({"recebidas": len(objs)}, status=status.HTTP_201_CREATED)
+            inseridas = Reading.objects.count() - antes
+        return Response({"recebidas": len(objs), "inseridas": inseridas},
+                        status=status.HTTP_201_CREATED)

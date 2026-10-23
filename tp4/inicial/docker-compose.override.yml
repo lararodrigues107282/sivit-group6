@@ -1,30 +1,26 @@
-# TP4: acrescenta ao compose de TP2/TP3 o serviço de ingestão e o gerador de carga.
-#
-# Copiar para a raiz do repositório, ao lado do docker-compose.yml. O
-# `docker compose` junta os dois ficheiros sozinho; não é preciso -f.
-# (Se o vosso ficheiro se chama compose.yaml, chamar a este compose.override.yaml.)
 services:
   portal:
     environment:
-      # Latência artificial, para a falha em cascata do exercício 3.
-      # Precisa do middleware de portal/vigilancia/middleware.py.
       LATENCIA_MS: ${LATENCIA_MS:-0}
 
   ingestao:
-    build: ./ingestao            # o vosso Dockerfile e o vosso main.py
+    build: ./tp4/inicial/ingestao            # o vosso Dockerfile e o vosso main.py
     environment:
-      DATABASE_URL: postgres://sivit:${POSTGRES_PASSWORD:-devpass}@sivitDB:5432/sivit
+      DATABASE_URL: postgres://sivit:${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD no .env}@sivitDB:5432/sivit
       PORTAL: http://portal:8000
       PORTAL_TOKEN: ${PORTAL_TOKEN:-}
-      # Sugestão para o exercício 3: um interruptor por padrão, para medir
-      # cada um isoladamente. off | sincrona | timeout | retry | disjuntor | cache
       MODO_VALIDACAO: ${MODO_VALIDACAO:-off}
     depends_on:
       sivitDB: { condition: service_healthy }
     ports: ["${PORTA_INGESTAO:-8001}:8001"]
 
-  # Gerador de carga: só corre quando chamado, e termina no fim da medição.
-  #   docker compose run --rm carga http://ingestao:8001/teste/assincrono --concorrencia 50 --duracao 10
+ 
   carga:
-    build: ./ferramentas
+    build: ./tp4/inicial/ferramentas
     profiles: [ferramentas]
+
+  gateway:
+    build: ./tp4/inicial/gateway
+    profiles: [ferramentas]
+    volumes:
+      - ./tp4/inicial/gateway/dados:/dados

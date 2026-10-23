@@ -23,4 +23,3 @@ Na mesma transação, ou a operação e chave são registadas, ou nenhuma.
 | **Sem Paginação** (No pagination) | Lento / Risco de Timeout | N/A (Devolve todos os registos) | Muito Grande |
 | **Offset** (`?page=`) | Rápido | Muito Lento | Pequeno |
 | **Cursor** (`?after=<instant>&limit=100`) | Rápido | Muito Rápido | Pequeno |
-
