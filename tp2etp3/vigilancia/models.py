@@ -25,14 +25,13 @@ class Reading(models.Model):
     unit = models.CharField(max_length=20)
 
     class Meta:
-       constraints = [
-           models.UniqueConstraint(
+        constraints = [
+            models.UniqueConstraint(
                 fields=["device", "instant", "parameter"],
                 name="uniq_reading"
             )
         ]
-
-    indexes = [models.Index(fields=["device", "-instant"])] 
+        indexes = [models.Index(fields=["device", "-instant"])]
 
 class IdempotencyKey(models.Model):
     key      = models.CharField(max_length=64, primary_key=True)

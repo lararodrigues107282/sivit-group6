@@ -1,8 +1,12 @@
+name: tp1
+
 services:
   echo:
-    build: ./echo-service
+    build: ./tp1/echo-service
+    profiles: [tp1]
     environment:
       SERVICE_NAME: echo
   client:
-    build: ./client
+    build: ./tp1/client
+    profiles: [tp1]
     depends_on: [echo]

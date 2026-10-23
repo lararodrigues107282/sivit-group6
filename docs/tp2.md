@@ -14,7 +14,9 @@
 ## Exercício 4: O Efeito N+1
 | Abordagem | Nº de Queries | Tempo de Execução (ms) |
 | :--- | :---: | :---: |
-| Naive | 9 | 36.25 |
-| + select_related | 7 | 21.92 |
-| + prefetch_related | 6 | 28.8 |
-| + subquery for last reading | 2 | 20.81 |
+| Naive | 101 | 84.96 |
+| + select_related | 81 | 75.76 |
+| + prefetch_related | 62 | 73.21 |
+| + subquery for last reading | 2 | 4.80 |
+
+Medido com `python manage.py medir_n1` (20 admissões × 3 dispositivos, mediana de 5 execuções). As variantes são cumulativas: cada uma mantém as anteriores. A variante naive faz 1 + 20 + 20 + 60 = 101 queries, o que corresponde à contagem esperada.
