@@ -1,51 +1,25 @@
 # Respostas à TP3 - Laboratório de SIVIT
 
-Medições feitas no ambiente Docker Compose (PostgreSQL 16, Gunicorn com 3 workers), com a base de dados de teste preenchida pelos comandos de gestão `medir_n1` e `medir_paginacao`.
+## Exercício 2: Idempotência demonstrada
+1. Neste exercício, apliquei a semântica at-least-once, que quando combinada com mecanismos de idempotência origina um comportamento exactly-once.
+O utilizador pode inserir diversas vezes o seu pedido caso não lhe chegue uma resposta de que este foi submetido, levando à possibilidade do servidor receber mais do que um pedido igual, mas nunca nenhum. Assim, verificámos a implementação de at-least-once na entrega.
+Esta semântica combinada com o comportamento do UNIQUE CONSTRAINT e da função de idempotência aplicados ao sistema geram um comportamento exactly-once. Assim, independentemente do número de vezes que o cliente submete o seu pedido, este será apenas guardado uma vez na base de dados. Trata-se de exactly-once no efeito e não na entrega.
 
-## Idempotência na ingestão de leituras
+2. Ambas evitam duplicados, no entanto UNIQUE CONSTRAINT fá-lo pela identidade natural dos dados: compara os parâmetros de uma leitura e rejeita a inserção de uma segunda igual. Já a chave de idempotência avalia o identificador da operação definido pelo utilizador: compara o identificador enviado pelo utilizador em várias tentativas e, se estes forem iguais devolve a resposta já guardada. 
+Só a primeira funciona quando a mesma informação chega através de diferentes identificadores de operação. Por exemplo, quando o utilizador gera uma nova chave a cada tentativa.
+Só a segunda funciona quando a operação não tem um identificador natural. Por exemplo, é possível que um doente receba alta mais do que uma vez durante a sua vida, no entanto, por falha, duas altas podem referir-se à mesma operação, sendo o identificador definido pelo utilizador que permite eliminar essa duplicação. 
 
-1. **Semântica de falha:** A ingestão de um lote corre dentro de `transaction.atomic()`. Se ocorrer um erro a meio (por exemplo, uma falha de ligação à base de dados), a transação faz *rollback* e nenhuma leitura do lote fica gravada. O gateway recebe o erro e pode reenviar o lote inteiro sem risco de duplicação. As leituras que já existiam são ignoradas por `bulk_create(ignore_conflicts=True)`, que não é tratado como erro.
+3. Se a resposta for guardada fora da transação permite-se ao sistema ficar num estado inconsistente, caso o servidor falhe entre o registo da operação e da chave. Existem dois casos possíveis, o sistema guarda a operação sem chave registada, levando à possibilidade de repetição do pedido com a mesma chave - como o sistema não a encontra, executa a operação novamente. Ou, o registo de uma chave sem qualquer informação associada, fazendo com que o utilizador repita o pedido com a chave já guardada - o sistema devolve resposta de sucesso mas a operação nunca foi executada.
+Na mesma transação, ou a operação e chave são registadas, ou nenhuma.
 
-2. **UNIQUE vs chave de idempotência:** A restrição `UniqueConstraint(device, instant, parameter)` garante a integridade dos dados: impede que a mesma medição fique duas vezes na base, independentemente de quantos pedidos a repetem. Por si só, não devolve uma resposta ao cliente. Uma chave de idempotência (`IdempotencyKey`) guarda a resposta de um pedido identificado por uma chave e devolve essa mesma resposta nos retries. Para as leituras, a chave natural (dispositivo, instante, parâmetro) é suficiente, porque identifica univocamente cada medição. A `IdempotencyKey` justifica-se em operações sem chave natural. A tabela existe na migração `0002`, mas ainda não é usada pela API.
+4. Uma chave de idempotência deve ser guardada mais tempo do que a janela máxima de novas tentativas do utilizador. Este tempo deve ser avaliado consoante o modelo em que esta é implementada. O trade-off é a avaliação das vantagens de guardar a chave durante menos tempo - menor espaço utilizado e maior privacidade - e de a guardar durante mais tempo - maior proteção contra com tentativas tardias.
 
-3. **Resposta escrita fora da transação:** Se a resposta se perder depois do *commit*, o gateway repete o pedido. As leituras já estão gravadas, o UNIQUE impede os duplicados, e a segunda resposta devolve `inseridas: 0`. Se a falha ocorrer antes do *commit*, nada ficou gravado e o retry insere o lote completo. O teste `test_resposta_perdida_seguida_de_retry_e_correta` verifica este caso. Limitação: o valor `inseridas` é calculado pela diferença de `count()` antes e depois da inserção. Com pedidos concorrentes, outro pedido pode inserir leituras entre as duas contagens, e o número reportado fica errado, embora os dados estejam corretos. O valor deve ser lido como indicação, não como garantia.
+## Exercício 3: Medição de Desempenho com 50 000 Registos
 
-4. **Tempo de retenção das chaves:** Uma chave deve ser guardada pelo menos durante a janela máxima de retry do gateway, com uma margem. Propomos 24 horas, usando o campo `created` para uma limpeza periódica. A limpeza ainda não está implementada.
+1. Tabela Comparativa de Estratégias de Paginação
 
-## Paginação
-
-Medição com 50 000 leituras num único dispositivo e página de 100 elementos. Mediana de 3 execuções.
-
-| Estratégia | 1.ª página (ms) | Página 500 (ms) | Tamanho da 1.ª página (bytes) |
-| :--- | ---: | ---: | ---: |
-| Sem paginação | 37 008,3 | n/a (devolve tudo) | 4 850 001 |
-| Offset (`?page=`) | 72,5 | 81,1 | 9 812 |
-| Cursor (`?after=&limit=`) | 73,7 | 94,6 | 9 754 |
-
-A ausência de paginação é a diferença mais clara: 37 segundos e 4,8 MB para mostrar 100 leituras. Entre offset e cursor, a diferença é pequena. Nesta consulta, o custo dominante é o `ORDER BY instant DESC`, que ordena as 50 000 linhas em todas as páginas. Por isso, a página 500 custa quase o mesmo que a primeira. A escolha entre offset e cursor não se justifica por estes números. O argumento para o cursor é teórico: com offset, a base de dados tem de percorrer e descartar todas as linhas anteriores à página pedida, e esse custo cresce com a profundidade da página.
-
-## Plano de execução (EXPLAIN ANALYZE)
-
-Consulta da página 500 (`OFFSET 49900 LIMIT 100`) sobre as 50 000 leituras, com e sem o índice composto `(device, -instant)`.
-
-| Execução | Índice composto | Execution Time |
-| :--- | :---: | ---: |
-| Antes do `ANALYZE` | presente | 24,222 ms |
-| Antes do `ANALYZE` | removido (em transação, com `ROLLBACK`) | 45,936 ms |
-| Depois do `ANALYZE` | presente | 21,304 ms |
-| Depois do `ANALYZE` | removido (em transação, com `ROLLBACK`) | 22,133 ms |
-
-Observações:
-
-- Em todas as execuções, o planeador usa o índice simples `vigilancia_reading_device_id_7cdac503` e faz um `Sort` em disco (*external merge*, 2840 kB). O índice composto não é escolhido.
-- A estimativa do planeador mantém-se em 839 linhas, contra 50 000 reais, mesmo depois do `ANALYZE`. A causa provável é o filtro `device_id = (SELECT id ...)`, cujo valor só é conhecido em execução. Esta explicação não foi confirmada.
-- A diferença de 24 para 46 ms na primeira execução é variação entre medições. Depois do `ANALYZE`, as duas versões ficam em 21 a 22 ms.
-- Um `OFFSET 49900` obriga a ler 50 000 entradas de qualquer índice. O índice só evita o `Sort`, não as leituras. Por isso, o ganho de um índice para paginação em profundidade é limitado. Um índice compõe-se com a paginação por cursor, que pára ao fim de 100 linhas. Este cenário não foi medido.
-
-## Contrato da API: OpenAPI vs `.proto`
-
-A API está documentada em OpenAPI, gerada automaticamente pelo `drf-spectacular` em `/api/schema/` e visualizada no Swagger UI. O contrato usa JSON sobre HTTP, que qualquer navegador ou cliente HTTP consegue consumir.
-
-Um ficheiro `.proto` (Protocol Buffers, usado em gRPC) descreve um contrato binário sobre HTTP/2, com geração de código e mensagens mais compactas. É uma boa escolha para tráfego de alta frequência entre componentes internos, por exemplo entre o gateway e o backend.
-
-Escolhemos OpenAPI porque o portal e os clientes externos consomem JSON, e porque a documentação interativa é útil para a equipa. Um `.proto` seria a alternativa a considerar para o canal de ingestão do gateway se o volume de leituras o justificar. Tem como custo a necessidade de ferramentas específicas e a impossibilidade de testar os endpoints diretamente no navegador.
+| Estratégia | Primeira Página | Página 500 | Tamanho da Resposta |
+| :--- | :--- | :--- | :--- |
+| **Sem Paginação** (No pagination) | Lento / Risco de Timeout | N/A (Devolve todos os registos) | Muito Grande |
+| **Offset** (`?page=`) | Rápido | Muito Lento | Pequeno |
+| **Cursor** (`?after=<instant>&limit=100`) | Rápido | Muito Rápido | Pequeno |
