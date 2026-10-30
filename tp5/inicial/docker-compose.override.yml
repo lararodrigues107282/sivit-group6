@@ -1,0 +1,48 @@
+services:
+  portal:
+    environment:
+      LATENCIA_MS: ${LATENCIA_MS:-0}
+
+  ingestao:
+    build: ./tp5/inicial/ingestao
+    environment:
+      DATABASE_URL: postgres://sivit:${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD no .env}@sivitDB:5432/sivit
+      PORTAL: http://portal:8000
+      PORTAL_TOKEN: ${PORTAL_TOKEN:-}
+      MODO_VALIDACAO: ${MODO_VALIDACAO:-off}
+    depends_on:
+      - sivitDB
+      - rabbitmq
+    ports: ["${PORTA_INGESTAO:-8001}:8001"]
+
+  carga:
+    build: ./tp5/inicial/ferramentas
+    profiles: [ferramentas]
+
+  gateway:
+    build: ./tp5/inicial/gateway
+    profiles: [ferramentas]
+    volumes:
+      - ./tp5/inicial/gateway/dados:/dados
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: sivit_rabbitmq
+    command: rabbitmq-server -set_env RABBITMQ_VM_MEMORY_HIGH_WATERMARK 0.8
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connection"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  archive_worker:
+    build: ./tp5/inicial/worker
+    environment:
+      - DATABASE_URL=postgres://sivit:devpass@sivitDB:5432/sivit
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq/
+    depends_on:
+      - sivitDB
+      - rabbitmq
