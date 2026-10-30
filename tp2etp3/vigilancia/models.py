@@ -32,3 +32,8 @@ class Reading(models.Model):
             )
         ]
         indexes = [models.Index(fields=["device", "-instant"])]
+
+class IdempotencyKey(models.Model):
+    key      = models.CharField(max_length=64, primary_key=True)
+    response = models.JSONField()
+    created  = models.DateTimeField(auto_now_add=True)

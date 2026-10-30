@@ -1,0 +1,12 @@
+[
+  {"device": "ECG-001", "instant": "2026-10-15T10:00:00Z", "parameter": "HR", "value": 80, "unit": "bpm"},
+  {"device": "ECG-001", "instant": "2026-10-15T10:00:01Z", "parameter": "HR", "value": 81, "unit": "bpm"},
+  {"device": "ECG-001", "instant": "2026-10-15T10:00:02Z", "parameter": "HR", "value": 82, "unit": "bpm"},
+  {"device": "ECG-001", "instant": "2026-10-15T10:00:03Z", "parameter": "HR", "value": 83, "unit": "bpm"},
+  {"device": "ECG-001", "instant": "2026-10-15T10:00:04Z", "parameter": "HR", "value": 84, "unit": "bpm"},
+  {"device": "ECG-001", "instant": "2026-10-15T10:00:05Z", "parameter": "HR", "value": 85, "unit": "bpm"},
+  {"device": "ECG-001", "instant": "2026-10-15T10:00:06Z", "parameter": "HR", "value": 86, "unit": "bpm"},
+  {"device": "ECG-001", "instant": "2026-10-15T10:00:07Z", "parameter": "HR", "value": 87, "unit": "bpm"},
+  {"device": "ECG-001", "instant": "2026-10-15T10:00:08Z", "parameter": "HR", "value": 88, "unit": "bpm"},
+  {"device": "ECG-001", "instant": "2026-10-15T10:00:09Z", "parameter": "HR", "value": 89, "unit": "bpm"}
+]

@@ -1,0 +1,26 @@
+services:
+  portal:
+    environment:
+      LATENCIA_MS: ${LATENCIA_MS:-0}
+
+  ingestao:
+    build: ./tp4/inicial/ingestao            # o vosso Dockerfile e o vosso main.py
+    environment:
+      DATABASE_URL: postgres://sivit:${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD no .env}@sivitDB:5432/sivit
+      PORTAL: http://portal:8000
+      PORTAL_TOKEN: ${PORTAL_TOKEN:-}
+      MODO_VALIDACAO: ${MODO_VALIDACAO:-off}
+    depends_on:
+      sivitDB: { condition: service_healthy }
+    ports: ["${PORTA_INGESTAO:-8001}:8001"]
+
+ 
+  carga:
+    build: ./tp4/inicial/ferramentas
+    profiles: [ferramentas]
+
+  gateway:
+    build: ./tp4/inicial/gateway
+    profiles: [ferramentas]
+    volumes:
+      - ./tp4/inicial/gateway/dados:/dados
