@@ -3,6 +3,18 @@ services:
     environment:
       LATENCIA_MS: ${LATENCIA_MS:-0}
 
+  # TP5: o broker. Consola em http://localhost:15672 (sivit / devpass)
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: sivit
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-devpass}
+    ports: ["${PORTA_BROKER:-15672}:15672"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      retries: 10
+
   ingestao:
     build: ./tp5/inicial/ingestao
     environment:
@@ -10,10 +22,53 @@ services:
       PORTAL: http://portal:8000
       PORTAL_TOKEN: ${PORTAL_TOKEN:-}
       MODO_VALIDACAO: ${MODO_VALIDACAO:-off}
+      AMQP_URL: amqp://sivit:${RABBITMQ_PASSWORD:-devpass}@rabbitmq:5672/
+      POR_FILA: ${POR_FILA:-1}
+      CONFIRMS: ${CONFIRMS:-1}
     depends_on:
-      - sivitDB
-      - rabbitmq
+      sivitDB: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
     ports: ["${PORTA_INGESTAO:-8001}:8001"]
+
+  # TP5: os consumidores. Uma imagem, um script cada. As variáveis são os botões
+  # das experiências:  PREFETCH=1 TRABALHO_MS=50 docker compose up -d alarms_worker
+  archive_worker:
+    build: ./tp5/inicial/worker
+    command: python archive.py
+    environment: &ambiente_worker
+      AMQP_URL: amqp://sivit:${RABBITMQ_PASSWORD:-devpass}@rabbitmq:5672/
+      DATABASE_URL: postgres://sivit:${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD no .env}@sivitDB:5432/sivit
+      PREFETCH: ${PREFETCH:-10}
+      ACK_AUTOMATICO: ${ACK_AUTOMATICO:-0}
+      TRABALHO_MS: ${TRABALHO_MS:-0}
+      SEM_ON_CONFLICT: ${SEM_ON_CONFLICT:-0}
+      MORRER_APOS: ${MORRER_APOS:-0}
+      MORRER_ANTES_DO_ACK: ${MORRER_ANTES_DO_ACK:-0}
+      MAX_MENSAGENS: ${MAX_MENSAGENS:-100000}
+      POLITICA_CHEIA: ${POLITICA_CHEIA:-reject-publish}
+    depends_on: &dependencias_worker
+      rabbitmq: { condition: service_healthy }
+      sivitDB: { condition: service_healthy }
+
+  alarms_worker:
+    build: ./tp5/inicial/worker
+    command: python alarms.py
+    environment: *ambiente_worker
+    depends_on: *dependencias_worker
+
+  display_worker:
+    build: ./tp5/inicial/worker
+    command: python display.py
+    environment: *ambiente_worker
+    depends_on: *dependencias_worker
+
+  # Ex. 2.4: o quarto consumidor. Só arranca com  docker compose --profile fanout up -d stats_worker
+  stats_worker:
+    build: ./tp5/inicial/worker
+    command: python stats.py
+    environment: *ambiente_worker
+    depends_on: *dependencias_worker
+    profiles: [fanout]
 
   carga:
     build: ./tp5/inicial/ferramentas
@@ -24,25 +79,3 @@ services:
     profiles: [ferramentas]
     volumes:
       - ./tp5/inicial/gateway/dados:/dados
-
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    container_name: sivit_rabbitmq
-    command: rabbitmq-server -set_env RABBITMQ_VM_MEMORY_HIGH_WATERMARK 0.8
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_port_connection"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
-
-  archive_worker:
-    build: ./tp5/inicial/worker
-    environment:
-      - DATABASE_URL=postgres://sivit:devpass@sivitDB:5432/sivit
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq/
-    depends_on:
-      - sivitDB
-      - rabbitmq

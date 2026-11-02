@@ -1,13 +1,10 @@
-import os, time, random, asyncio, logging, httpx
+import os, time, json, random, asyncio, logging, httpx
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+
 import aio_pika
 import asyncpg
-from datetime import datetime
-from fastapi import FastAPI, HTTPException, status
-
-import asyncpg
-from fastapi import FastAPI, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import FastAPI, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 DATABASE_URL = os.environ["DATABASE_URL"]
@@ -18,6 +15,15 @@ FROM vigilancia_device d
 WHERE d.serial_number = $1::varchar
 ON CONFLICT (device_id, instant, parameter) DO NOTHING
 """
+
+
+AMQP_URL = os.environ["AMQP_URL"]
+POR_FILA = os.getenv("POR_FILA", "1") == "1"   # apenas para o exercicio 1 para comparar os 3 modos
+CONFIRMS = os.getenv("CONFIRMS", "1") == "1"  # apenas para o exercicio 1 para comparar os 3 modos
+EXCHANGE = "readings"
+TIMEOUT_PUBLICACAO = 5                        
+
+log = logging.getLogger("ingestao")
 
 
 class Reading(BaseModel):
@@ -33,21 +39,17 @@ class Reading(BaseModel):
 async def lifespan(app: FastAPI):
     app.state.pool = await asyncpg.create_pool(DATABASE_URL, min_size=5, max_size=20)
 
-    app.state.rmq_conn = await aio_pika.connect_robust("amqp://guest:guest@rabbitmq:5672/")
-    app.state.rmq_chan = await app.state.rmq_conn.channel()
-
-    app.state.exchange = await app.state.rmq_chan.declare_exchange(
-        "readings", aio_pika.ExchangeType.TOPIC, durable=True
-    )
+    # TP5 Ex.1
+    app.state.rmq_conn = await aio_pika.connect_robust(AMQP_URL)
+    app.state.rmq_chan = await app.state.rmq_conn.channel(publisher_confirms=CONFIRMS)
+    app.state.exchange = await app.state.rmq_chan.declare_exchange(EXCHANGE, aio_pika.ExchangeType.TOPIC, durable=True)
 
     yield
     await app.state.rmq_conn.close()
     await app.state.pool.close()
 
 
-app = FastAPI(title="SIVIT Ingestão", lifespan=lifespan)
-
-"""Exercicio 1 de TP4"""
+app = FastAPI(title="SIVIT ingestão", lifespan=lifespan)
 
 @app.get("/health/live")
 async def live():
@@ -57,17 +59,35 @@ async def live():
 
 @app.get("/health/ready")
 async def ready(response: Response):
-    """Verifica se esta pronto a receber tráfego."""
+    """Verifica se está pronto a receber tráfego (BD e, com POR_FILA=1, o broker)."""
     try:
         async with asyncio.timeout(1):
             async with app.state.pool.acquire() as c:
                 await c.fetchval("SELECT 1")
+        if POR_FILA and not app.state.rmq_conn.connected.is_set():
+            raise ConnectionError("broker")
         return {"status": "ok"}
     except Exception as exc:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return {"status": "unavailable", "error": type(exc).__name__}
+        return {"status": "unavailable", "error": f"{type(exc).__name__} {exc}".strip()}
 
-"""Exercicio 2 DE TP4"""
+#  TP5 Exercicio 1
+
+async def publish_reading(r: Reading, exchange: aio_pika.abc.AbstractExchange):
+    """Publica uma leitura na exchange (TP5), em vez de a gravar na BD (TP4)."""
+    body = r.model_dump(mode="json")            # device, instant, parameter, value, unit
+    body["_published_at"] = datetime.now(timezone.utc).isoformat()   # para a latência (Ex. 4.3)
+
+    await exchange.publish(
+        aio_pika.Message(
+            body=json.dumps(body).encode(),
+            content_type="application/json",
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,                   # sobrevive a um reinício do broker
+            message_id=f"{r.device}|{r.instant.isoformat()}|{r.parameter}",  # chave de deduplicação
+        ),
+        routing_key=f"reading.{r.parameter.lower()}.{r.device}",
+    )
+
 
 @app.post("/v1/readings", status_code=202)
 async def ingest(batch: list[Reading]):
@@ -79,10 +99,22 @@ async def ingest(batch: list[Reading]):
     if por_reconciliar:
         log.warning("Aceites sem validação (reconciliar): %s", por_reconciliar)
 
-    rows = [(r.device, r.instant, r.parameter, r.value, r.unit) for r in aceites]
-    async with app.state.pool.acquire() as c:
-        await c.executemany(INSERT_LEITURA, rows)
+    if POR_FILA:
+        try:
+            # As publicações do lote seguem em paralelo; com confirms, espera-se uma vez, não dez.
+            async with asyncio.timeout(TIMEOUT_PUBLICACAO):
+                await asyncio.gather(*(publish_reading(r, app.state.exchange) for r in aceites))
+        except Exception as exc:
+            # Broker em baixo, fila cheia (reject-publish) ou timeout: o gateway guarda e reenvia.
+            log.error("Publicação falhou: %r", exc)
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                f"broker unavailable: {type(exc).__name__}")
+    else:
+        rows = [(r.device, r.instant, r.parameter, r.value, r.unit) for r in aceites]
+        async with app.state.pool.acquire() as c:
+            await c.executemany(INSERT_LEITURA, rows)
     return {"received": len(batch), "accepted": len(aceites), "unvalidated": por_reconciliar}
+
 
 @app.get("/teste/bloqueante")
 async def teste_bloqueante():
@@ -102,13 +134,9 @@ def teste_thread():
     return {"ok": True}
 
 
-"""Exercicio 3 de TP4"""
-
-
 PORTAL = os.getenv("PORTAL", "http://portal:8000")
 HEADERS = {"Authorization": f"Token {os.getenv('PORTAL_TOKEN', '')}"}
 MODO = os.getenv("MODO_VALIDACAO", "off")
-log = logging.getLogger("ingestao")
 
 
 def tem_admissao(dados) -> bool:
@@ -208,31 +236,3 @@ async def validar(serial: str):
     if MODO == "breaker":   return await validar_breaker(serial)
     if MODO == "cache":     return await validar_cache(serial)
     raise ValueError(f"MODO_VALIDACAO desconhecido: {MODO}")
-
-# Exercise 1 (TP5)
-
-async def publish_reading(r: Reading, exchange: aio_pika.Exchange):
-    body = r.model_dump(mode="json")
-    body["_published_at"] = datetime.now(timezone.utc).isoformat()
-    
-    await exchange.publish(
-        aio_pika.Message(
-            body=json.dumps(body).encode(),
-            delivery_mode=aio_pika.DeliveryMode.PERSISTENT, # Ensures message survives broker restarts
-            message_id=f"{r.device}|{r.instant.isoformat()}|{r.parameter}" # Used for deduplication
-        ),
-        routing_key=f"reading.{r.parameter.lower()}.{r.device}"
-    )
-
-@app.post("/v1/readings", status_code=202)
-async def ingest(batch: list[Reading]):
-    try:
-        # Publish all readings concurrently to the RabbitMQ exchange
-        await asyncio.gather(*(publish_reading(r, app.state.exchange) for r in batch))
-    except Exception as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"broker unavailable: {exc}")
-    
-    return {"received": len(batch)}
-
-# Exercise 2 (TP5)
-

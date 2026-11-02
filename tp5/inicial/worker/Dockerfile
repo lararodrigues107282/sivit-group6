@@ -3,5 +3,6 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY worker.py .
-ENTRYPOINT ["python", "worker.py"]
+COPY *.py ./
+# Uma imagem, um script por consumidor: o compose escolhe com `command: python archive.py`
+CMD ["python", "archive.py"]
